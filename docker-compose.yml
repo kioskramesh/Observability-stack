@@ -1,0 +1,140 @@
+# Observability lab stack
+# OSS path (default):  docker compose up --build
+# + Datadog agent:    docker compose --profile datadog up --build
+
+name: observability-stack
+
+services:
+  order-service:
+    build: ./app
+    container_name: order-service
+    ports:
+      - "8000:8000"
+    environment:
+      APP_NAME: order-service
+      APP_ENV: local
+      LOG_LEVEL: INFO
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4317
+    depends_on:
+      - otel-collector
+    networks:
+      - obs
+    labels:
+      logging: "promtail"
+      com.docker.compose.service: order-service
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      - --enable-feature=remote-write-receiver
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - obs
+
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: loki
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    ports:
+      - "3100:3100"
+    networks:
+      - obs
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: promtail
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    networks:
+      - obs
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: tempo
+    command: ["-config.file=/etc/tempo/tempo-config.yml"]
+    volumes:
+      - ./observability/tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
+    ports:
+      - "3200:3200"
+    networks:
+      - obs
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    container_name: otel-collector
+    command: ["--config=/etc/otel/config.yml"]
+    volumes:
+      - ./observability/otel/otel-collector-config.yml:/etc/otel/config.yml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "8888:8888"
+      - "8889:8889"
+    depends_on:
+      - tempo
+    networks:
+      - obs
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      GF_USERS_DEFAULT_THEME: light
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    networks:
+      - obs
+
+  # Optional commercial agent — needs DD_API_KEY in .env
+  datadog-agent:
+    profiles: ["datadog"]
+    image: gcr.io/datadoghq/agent:7
+    container_name: datadog-agent
+    environment:
+      DD_API_KEY: ${DD_API_KEY}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_HOSTNAME: observability-lab
+      DD_LOGS_ENABLED: "true"
+      DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "true"
+      DD_CONTAINER_EXCLUDE: "name:datadog-agent"
+      DD_APM_ENABLED: "true"
+      DD_APM_NON_LOCAL_TRAFFIC: "true"
+      DD_DOGSTATSD_NON_LOCAL_TRAFFIC: "true"
+      DD_PROCESS_AGENT_ENABLED: "true"
+      DD_ENV: ${DD_ENV:-local}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+    ports:
+      - "8126:8126"
+    networks:
+      - obs
+
+networks:
+  obs:
+    driver: bridge

@@ -1,0 +1,35 @@
+groups:
+  - name: order-service
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5..",job="order-service"}[5m]))
+          /
+          sum(rate(http_requests_total{job="order-service"}[5m]))
+          > 0.05
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order service 5xx rate > 5%"
+          description: "Error ratio is {{ $value | humanizePercentage }} over 5m."
+
+      - alert: HighLatencyP99
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(rate(http_request_duration_seconds_bucket{job="order-service"}[5m])) by (le)
+          ) > 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Order service p99 latency > 1s"
+
+      - alert: OrdersFailing
+        expr: rate(orders_failed_total[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Elevated order failures"

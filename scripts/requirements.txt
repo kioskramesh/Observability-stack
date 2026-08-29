@@ -1,0 +1,2 @@
+# Dev dependencies for running simulation scripts on the host
+httpx==0.28.1

@@ -1,0 +1,50 @@
+# Used with: docker compose --profile datadog up
+# Requires DD_API_KEY in .env
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  datadog/connector:
+
+processors:
+  batch:
+    timeout: 5s
+  memory_limiter:
+    check_interval: 2s
+    limit_mib: 400
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  prometheus:
+    endpoint: 0.0.0.0:8889
+  datadog:
+    api:
+      key: ${env:DD_API_KEY}
+      site: ${env:DD_SITE}
+  logging:
+    verbosity: basic
+
+connectors:
+  datadog/connector:
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo, datadog, logging]
+    metrics:
+      receivers: [otlp, datadog/connector]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus, datadog]
+
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
